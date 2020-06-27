@@ -1,0 +1,13 @@
+name: cryp-8
+version: 0.1.0
+
+authors:
+  - Дмитриев Михаил Евгеньевич <mdmitriev@phoenixit.ru>
+
+targets:
+  cryp-8:
+    main: src/cryp-8.cr
+
+crystal: 0.34.0
+
+license: MIT
