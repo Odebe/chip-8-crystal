@@ -1,4 +1,9 @@
 require "benchmark"
+require "sdl"
+
+
+# require "ncurses"
+
 
 # TODO: Write documentation for `Cryp::8`
 module Cryp8
@@ -35,6 +40,10 @@ class Vm::Memory
 
   def [](i)
     @values[i]
+  end
+
+  def [](r : Range(UInt16, UInt16))
+    @values[r]
   end
 
   def []=(i , v : UInt8)
@@ -83,15 +92,114 @@ class Vm::Stack(T)
   end
 end
 
+module Vm::Video::Interface
+  abstract def puts(msg : String) : Nil
+  abstract def refresh: Nil
+  abstract def start: Nil
+  abstract def stop: Nil
+end
+
+# class Vm::Video::Memory
+#   # include Vm::Video::Interface
+
+#   @pixel_h : UInt8
+#   @pixel_w : UInt8
+
+#   def initialize
+#     # @actions = [] of { x: UInt8, y: UInt8 }
+#     @memory = Array(UInt64).new(32, 0) # handles 64hx32w
+    
+#     @pixel_h = 10.to_u8 # (width / 32).to_i32
+#     @pixel_w = 10.to_u8 # (hidth / 64).to_i32
+#   end
+
+#   def puts(msg : String) : Nil
+#   end
+
+#   def log_sprite(sprite : Array(UInt8))
+#     sprite.map { |e| e.to_s(2) }.join("\n")
+#   end
+
+#   # rewrite with pointers on memory MAXIMUM UNSAFE!!111
+#   def draw_sprite(sprite_bytes : Array(UInt8), x, y)
+#     yield "\n#{log_sprite(sprite_bytes)}"
+
+#     collision = false
+
+#     sprite_bytes.each_with_index do |sprite_pixel, sprite_line_index|
+#       line_num = y + sprite_line_index
+#       display_line = @memory[line_num]
+
+#       (0..8).each do |xi|
+#         next if (sprite_pixel & (0x80 >> xi)) == 0
+
+#         display_bit_p = (1.to_u64 << (63 - (x + xi)))
+#         collision = true if (display_line & display_bit_p) == 1
+#         @memory[line_num] ^= 1 #display_bit_p
+#       end
+#     end
+
+#     collision
+#   end
+
+#   def refresh: Nil
+#     @renderer.draw_color = SDL::Color[255, 255, 255, 255]
+#     @renderer.clear
+
+#     @renderer.draw_color = SDL::Color[0, 0, 0, 255]
+#     @memory.each_with_index do |line, line_i|
+#       (0..64).each do |pix_i|
+#         pix_value = line & (1.to_u64 << (63 - pix_i))
+
+#         @renderer.draw_color = 
+#           if pix_value == 1
+#             SDL::Color[0, 0, 0, 255]
+#             SDL::Color[255, 255, 255, 255]
+
+#           else
+#             SDL::Color[255, 255, 255, 255]
+#           end
+
+#         @renderer.fill_rect(pix_i * @pixel_w, line_i * @pixel_h, @pixel_w.to_i32, @pixel_h.to_i32)
+#       end
+#     end
+
+#     @renderer.present
+#   end
+
+#   def start: Nil
+#   end
+
+#   def stop: Nil
+#     # SDL.quit
+#   end
+# end
+
+SDL.init(SDL::Init::VIDEO)
+at_exit { SDL.quit }
+
 class Vm::Interpreter
   @i : UInt16
   @start_p : UInt16
   @pc : UInt16
+  @pixel_h : UInt8
+  @pixel_w : UInt8
+
 
   def initialize(@file : File)
     @stack = Vm::Stack(UInt16).new
     @registers = Vm::Registers(UInt8).new
     @memory = Vm::Memory.new
+    
+    @window = SDL::Window.new("Cryps-8!", 640, 320)
+    @renderer = SDL::Renderer.new(@window)
+    @video_memory = Array(UInt64).new(32, 0) # handles 64hx32w
+ 
+    # @pixel_h = 10.to_u8 # (width / 32).to_i32
+    # @pixel_w = 10.to_u8 # (hidth / 64).to_i32
+
+    @pixel_h = (@window.height / 32).to_u8
+    @pixel_w = (@window.width / 64).to_u8
 
     @i = 0.to_u16
     @start_p = 0x200.to_u16
@@ -237,6 +345,9 @@ class Vm::Interpreter
         y = (opcode & 0x00F0) >> 4
         n = opcode & 0x000F
         log "Draws a sprite at coordinate (V#{x}, V#{y}) that has a width of 8 pixels and a height of #{n} pixels. "
+        sprite_bytes = @memory[@i..(@i+n)]
+        collision = draw_sprite(sprite_bytes, x, y)
+        @registers[0xF] = 1 if collision
         @pc += 2
       when 0xE000
         x = (opcode & 0x0F00) >> 8
@@ -278,11 +389,12 @@ class Vm::Interpreter
   end
 
   def log(str)
+    # @video.puts "[#{@pc.to_s(16)}] [Reg: #{@registers.to_s}] #{str.to_s}"
     puts "[#{@pc.to_s(16)}] [Reg: #{@registers.to_s}] #{str.to_s}"
   end
 
   def cycle : Nil
-    cycle_per_sec = 30
+    cycle_per_sec = 10
     cycle_nanoseconds = (1_000_000_000/cycle_per_sec).to_i32
     cycle_time = Time::Span.new(nanoseconds: cycle_nanoseconds)
 
@@ -290,9 +402,17 @@ class Vm::Interpreter
       realtime = Benchmark.realtime do
         yield opcode_at(@pc)
       end
+
       sleep(cycle_time - realtime)
 
-      raise "meh" if @pc == 0x30e
+      refresh
+      # raise "meh" if @pc == 0x30e
+      # if @pc == 0x30e
+      #   @video_memory.each do |vl|
+      #     puts vl.to_s(2)
+      #   end
+      #   sleep
+      # end
     end
   end
 
@@ -300,26 +420,60 @@ class Vm::Interpreter
     code_value = (@memory[i].to_u16 << 8) | @memory[i + 1]
     Vm::OpCode.new(code_value)
   end
+
+  def draw_sprite(sprite_bytes : Array(UInt8), x, y)
+    collision = false
+
+    sprite_bytes.each_with_index do |sprite_pixel, sprite_line_index|
+      line_num = y + sprite_line_index
+      display_line = @video_memory[line_num]
+
+      (0..8).each do |xi|
+        # next if (sprite_pixel & (0x80 >> xi)) == 0
+
+        display_bit_p = (1.to_u64 << (63 - (x + xi)))
+        collision = true if (display_line & display_bit_p) == 1
+        @video_memory[line_num] ^= display_bit_p
+      end
+    end
+
+    collision
+  end
+
+  module Colors
+    GRAY = SDL::Color[175, 175, 175, 255]
+    WHITE = SDL::Color[255, 255, 255, 255] 
+    BLACK = SDL::Color[0, 0, 0, 255]
+  end
+
+  def refresh: Nil
+    @renderer.draw_color = Colors::GRAY
+    @renderer.clear
+
+    @video_memory.each_with_index do |line, line_i|
+      (0..64).each do |pix_i|
+        offset = 63 - pix_i
+        pix_value = (line & (1.to_u64 << offset)) >> offset
+        @renderer.draw_color = pix_value == 1 ? Colors::BLACK : Colors::WHITE 
+        @renderer.fill_rect(pix_i * @pixel_w, line_i * @pixel_h, @pixel_w.to_i32 - 1, @pixel_h.to_i32 - 1)
+      end
+    end
+
+    @renderer.present
+  end
 end
 
-file = File.open("BC_test.ch8")
-# file = File.open("test_opcode.ch8")
-# file = File.open("TETRIS")
-# file = File.open("GUESS")
+Signal::INT.trap do
+  puts "CTRL-C handler here!"
+  exit
+end
+
+# file = File.open("BC_test.ch8")
+# file = File.open("src/test_opcode.ch8")
+# file = File.open("src/TETRIS")
+file = File.open("src/GUESS")
 
 int = Vm::Interpreter.new(file)
 
 int.load_program!
 int.run!
-
-# puts int.to_s
-
-# until int.end?
-#   int.call
-#   int.next
-# end
-
-# V = []
-# (V[(opcode & 0x00F0) >> 4] > (0xFF - V[(opcode & 0x0F00) >> 8]))
-
-# (244 > (255 - 14))

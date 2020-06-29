@@ -8,6 +8,13 @@ targets:
   cryp-8:
     main: src/cryp-8.cr
 
+dependencies:
+  # ncurses:
+  #   github: SamualLB/ncurses
+  sdl:
+    github: ysbaddaden/sdl.cr
+
+
 crystal: 0.34.0
 
 license: MIT
