@@ -232,12 +232,7 @@ class Vm::Interpreter
         x = (opcode & 0x0F00) >> 8
         nn = opcode & 0x00FF
         log "Adds #{nn} to V#{x}. (Carry flag is not changed)"
-        @registers[x] =
-          if (@registers[x] > 0) && (nn > UInt8::MAX - @registers[x])
-            (UInt8::MAX - nn) + @registers[x] - 1
-          else
-            @registers[x] + nn
-          end
+        @registers[x] = @registers[x] &+ nn
         @pc += 2
       when 0x8000
         x = (opcode & 0x0F00) >> 8
@@ -257,32 +252,22 @@ class Vm::Interpreter
           @registers[x] = @registers[x] ^ @registers[y]
         when 0x0004
           log "Adds V#{y} to V#{x}. VF is set to 1 when there's a carry, and to 0 when there isn't."
-          if (@registers[x] > 0) && (@registers[y] > UInt8::MAX - @registers[x])
-            @registers[x] = @registers[x] - (UInt8::MAX - @registers[y]) - 1
-            @registers[0xF] = 1
-          else
-            @registers[x] = @registers[x] + @registers[y]
-            @registers[0xF] = 0
-          end
+          borrow = (@registers[y] > UInt8::MAX - @registers[x]) ? 1: 0
+          @registers[0xF] = borrow.to_u8
+          @registers[x] = @registers[x] &+ @registers[y]
         when 0x0005
           log "V#{y} is subtracted from V#{x}. VF is set to 0 when there's a borrow, and 1 when there isn't."
-          if @registers[x] < @registers[y]
-            @registers[x] = (255 - (@registers[y] - @registers[x]) + 1).to_u8
-            @registers[0xF] = 1
-          else
-            @registers[x] = @registers[x] - @registers[y]
-            @registers[0xF] = 0
-          end
+          borrow = @registers[x] < @registers[y] ? 1 : 0
+          @registers[x] = @registers[x] &- @registers[y]
         when 0x0006
           log "Stores the least significant bit of V#{x} in VF and then shifts V#{x} to the right by 1."
           @registers[0xF] = @registers[x] & 0x1
           @registers[x] = @registers[x] >> 1
         when 0x0007
           log "Sets V#{x} to V#{y} minus V#{x}. VF is set to 0 when there's a borrow, and 1 when there isn't."
-          result = @registers[y] - @registers[x]
-          borrow = result > @registers[y] ? 1 : 0
+          borrow = @registers[y] < @registers[x] ? 1 : 0
           @registers[0xF] = borrow.to_u8
-          @registers[x] = result
+          @registers[x] = @registers[y] &- @registers[x]
         when 0x000E
           log "Stores the most significant bit of V#{x} in VF and then shifts V#{x} to the left by 1."
           @registers[0xF] = @registers[x] & 0x80
