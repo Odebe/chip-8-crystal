@@ -66,6 +66,10 @@ class Vm::Registers(T)
     @values[i] = v
   end
 
+  def [](r : Range(UInt8, UInt8))
+    @values[r]
+  end
+
   def to_s
     @values.map { |e| e.to_s }.join(", ")
   end
@@ -99,98 +103,41 @@ module Vm::Video::Interface
   abstract def stop: Nil
 end
 
-# class Vm::Video::Memory
-#   # include Vm::Video::Interface
-
-#   @pixel_h : UInt8
-#   @pixel_w : UInt8
-
-#   def initialize
-#     # @actions = [] of { x: UInt8, y: UInt8 }
-#     @memory = Array(UInt64).new(32, 0) # handles 64hx32w
-    
-#     @pixel_h = 10.to_u8 # (width / 32).to_i32
-#     @pixel_w = 10.to_u8 # (hidth / 64).to_i32
-#   end
-
-#   def puts(msg : String) : Nil
-#   end
-
-#   def log_sprite(sprite : Array(UInt8))
-#     sprite.map { |e| e.to_s(2) }.join("\n")
-#   end
-
-#   # rewrite with pointers on memory MAXIMUM UNSAFE!!111
-#   def draw_sprite(sprite_bytes : Array(UInt8), x, y)
-#     yield "\n#{log_sprite(sprite_bytes)}"
-
-#     collision = false
-
-#     sprite_bytes.each_with_index do |sprite_pixel, sprite_line_index|
-#       line_num = y + sprite_line_index
-#       display_line = @memory[line_num]
-
-#       (0..8).each do |xi|
-#         next if (sprite_pixel & (0x80 >> xi)) == 0
-
-#         display_bit_p = (1.to_u64 << (63 - (x + xi)))
-#         collision = true if (display_line & display_bit_p) == 1
-#         @memory[line_num] ^= 1 #display_bit_p
-#       end
-#     end
-
-#     collision
-#   end
-
-#   def refresh: Nil
-#     @renderer.draw_color = SDL::Color[255, 255, 255, 255]
-#     @renderer.clear
-
-#     @renderer.draw_color = SDL::Color[0, 0, 0, 255]
-#     @memory.each_with_index do |line, line_i|
-#       (0..64).each do |pix_i|
-#         pix_value = line & (1.to_u64 << (63 - pix_i))
-
-#         @renderer.draw_color = 
-#           if pix_value == 1
-#             SDL::Color[0, 0, 0, 255]
-#             SDL::Color[255, 255, 255, 255]
-
-#           else
-#             SDL::Color[255, 255, 255, 255]
-#           end
-
-#         @renderer.fill_rect(pix_i * @pixel_w, line_i * @pixel_h, @pixel_w.to_i32, @pixel_h.to_i32)
-#       end
-#     end
-
-#     @renderer.present
-#   end
-
-#   def start: Nil
-#   end
-
-#   def stop: Nil
-#     # SDL.quit
-#   end
-# end
-
 SDL.init(SDL::Init::VIDEO)
 at_exit { SDL.quit }
 
 class Vm::Interpreter
   @i : UInt16
   @start_p : UInt16
+  @font_start_p : UInt16
   @pc : UInt16
   @pixel_h : UInt8
   @pixel_w : UInt8
 
+  FONTSET = [
+    0xF0, 0x90, 0x90, 0x90, 0xF0, # 0
+    0x20, 0x60, 0x20, 0x20, 0x70, # 1
+    0xF0, 0x10, 0xF0, 0x80, 0xF0, # 2
+    0xF0, 0x10, 0xF0, 0x10, 0xF0, # 3
+    0x90, 0x90, 0xF0, 0x10, 0x10, # 4
+    0xF0, 0x80, 0xF0, 0x10, 0xF0, # 5
+    0xF0, 0x80, 0xF0, 0x90, 0xF0, # 6
+    0xF0, 0x10, 0x20, 0x40, 0x40, # 7
+    0xF0, 0x90, 0xF0, 0x90, 0xF0, # 8
+    0xF0, 0x90, 0xF0, 0x10, 0xF0, # 9
+    0xF0, 0x90, 0xF0, 0x90, 0x90, # A
+    0xE0, 0x90, 0xE0, 0x90, 0xE0, # B
+    0xF0, 0x80, 0x80, 0x80, 0xF0, # C
+    0xE0, 0x90, 0x90, 0x90, 0xE0, # D
+    0xF0, 0x80, 0xF0, 0x80, 0xF0, # E
+    0xF0, 0x80, 0xF0, 0x80, 0x80  # F
+  ]
 
   def initialize(@file : File)
     @stack = Vm::Stack(UInt16).new
     @registers = Vm::Registers(UInt8).new
     @memory = Vm::Memory.new
-    
+
     @window = SDL::Window.new("Cryps-8!", 640, 320)
     @renderer = SDL::Renderer.new(@window)
     @video_memory = Array(UInt64).new(32, 0) # handles 64hx32w
@@ -203,7 +150,21 @@ class Vm::Interpreter
 
     @i = 0.to_u16
     @start_p = 0x200.to_u16
+    @font_start_p = (@start_p - FONTSET.size).to_u16
     @pc = @start_p.to_u16
+
+    load_fontset!
+  end
+
+  def load_fontset!
+    FONTSET.each_with_index do |font_byte, index|
+      mem_p = @font_start_p + index
+      @memory[mem_p] = font_byte.to_u8
+    end
+  end
+
+  def char_font_p(char)
+    @font_start_p + (char * 5)
   end
 
   def running?
@@ -221,11 +182,12 @@ class Vm::Interpreter
     cycle do |opcode|
       case opcode & 0xF000
       when 0x0000
-        case opcode & 0x00FF
-        when 0x00E0
+        case opcode & 0x000F
+        when 0x0000
           log "Clears the screen."
+          @video_memory = Array(UInt64).new(@video_memory.size, 0)
           @pc += 2
-        when 0x00EE
+        when 0x000E
           v = @stack.pop
           log "Returns from a subroutine to #{v.to_s(16)} (#{(v+2).to_s(16)})."
           @pc = (v + 2)
@@ -238,7 +200,7 @@ class Vm::Interpreter
         addr = opcode & 0x0FFF
         @stack.push @pc
         log "Calls subroutine at #{addr.to_s(16)}."
-        @pc = addr + 2
+        @pc = addr
       when 0x3000
         x = (opcode & 0x0F00) >> 8
         nn = opcode & 0x00FF
@@ -270,7 +232,12 @@ class Vm::Interpreter
         x = (opcode & 0x0F00) >> 8
         nn = opcode & 0x00FF
         log "Adds #{nn} to V#{x}. (Carry flag is not changed)"
-        @registers[x] = (@registers[x] | nn)
+        @registers[x] =
+          if (@registers[x] > 0) && (nn > UInt8::MAX - @registers[x])
+            @registers[x] - (UInt8::MAX - nn)
+          else
+            @registers[x] + nn
+          end
         @pc += 2
       when 0x8000
         x = (opcode & 0x0F00) >> 8
@@ -290,22 +257,29 @@ class Vm::Interpreter
           @registers[x] = @registers[x] ^ @registers[y]
         when 0x0004
           log "Adds V#{y} to V#{x}. VF is set to 1 when there's a carry, and to 0 when there isn't."
-          borrow = (@registers[y] > (0xFF - @registers[x])) ? 1 : 0
-          @registers[0xF] = borrow.to_u8
-          @registers[x] = @registers[x] | @registers[y]
+          if (@registers[x] > 0) && (@registers[y] > UInt8::MAX - @registers[x])
+            @registers[x] = @registers[x] - (UInt8::MAX - @registers[y])
+            @registers[0xF] = 1
+          else
+            @registers[x] = @registers[x] + @registers[y]
+            @registers[0xF] = 0
+          end
         when 0x0005
           log "V#{y} is subtracted from V#{x}. VF is set to 0 when there's a borrow, and 1 when there isn't."
-          result = @registers[x] ^ @registers[y]
-          borrow = result > @registers[x] ? 1 : 0
-          @registers[0xF] = borrow.to_u8
-          @registers[x] = result
+          if @registers[x] < @registers[y]
+            @registers[x] = @registers[y] - @registers[x]
+            @registers[0xF] = 1
+          else
+            @registers[x] = @registers[x] - @registers[y]
+            @registers[0xF] = 0
+          end
         when 0x0006
           log "Stores the least significant bit of V#{x} in VF and then shifts V#{x} to the right by 1."
           @registers[0xF] = @registers[x] & 0x1
           @registers[x] = @registers[x] >> 1
         when 0x0007
           log "Sets V#{x} to V#{y} minus V#{x}. VF is set to 0 when there's a borrow, and 1 when there isn't."
-          result = @registers[y] ^ @registers[x]
+          result = @registers[y] - @registers[x]
           borrow = result > @registers[y] ? 1 : 0
           @registers[0xF] = borrow.to_u8
           @registers[x] = result
@@ -321,7 +295,7 @@ class Vm::Interpreter
           x = (opcode & 0x0F00) >> 8
           y = (opcode & 0x00F0) >> 4
           log "Skips the next instruction if V#{x} doesn't equal V#{y}. "
-          s = @registers[x] != @registers[7] ? 4 : 2
+          s = @registers[x] != @registers[y] ? 4 : 2
           @pc += 2
         end
       when 0xA000
@@ -345,9 +319,9 @@ class Vm::Interpreter
         y = (opcode & 0x00F0) >> 4
         n = opcode & 0x000F
         log "Draws a sprite at coordinate (V#{x}, V#{y}) that has a width of 8 pixels and a height of #{n} pixels. "
-        sprite_bytes = @memory[@i..(@i+n)]
+        sprite_bytes = @memory[@i...(@i+n)]
         collision = draw_sprite(sprite_bytes, x, y)
-        @registers[0xF] = 1 if collision
+        @registers[0xF] = (collision == true ? 1.to_u8 : 0.to_u8)
         @pc += 2
       when 0xE000
         x = (opcode & 0x0F00) >> 8
@@ -371,15 +345,26 @@ class Vm::Interpreter
           log "Sets the sound timer to V#{x}."
         when 0x001E
           log "Adds V#{x} to I. VF is not affected."
-          @i += x
+          @i += @registers[x]
         when 0x0029
-          log "Sets I to the location of the sprite for the character in V#{x}. Characters 0-F (in hexadecimal) are represented by a 4x5 font."
+          log "Sets I to the location of the sprite for the character in V#{x} {#{@memory[x]}}. Characters 0-F (in hexadecimal) are represented by a 4x5 font."
+          @i = char_font_p(@memory[x])
         when 0x0033
+          # Store BCD representation of Vx in memory location starting at location I.
           log "Stores the binary-coded decimal representation of V#{x}"
+          @memory[@i]     = @registers[x] // 100;
+          @memory[@i + 1] = (@registers[x] // 10) % 10;
+          @memory[@i + 2] = @registers[x] % 10;
         when 0x0055
           log "Stores V0 to V#{x} (including V#{x}) in memory starting at address I."
+          @registers[0..x].each_with_index do |e, i|
+            @memory[@i + i] = e
+          end
         when 0x0065
           log "Fills V0 to V#{x} (including V#{x}) with values from memory starting at address I."
+          (0..x).each do |xi|
+            @registers[xi] = @memory[@i + xi]
+          end
         end
         @pc += 2
       else
@@ -401,18 +386,10 @@ class Vm::Interpreter
     while running?
       realtime = Benchmark.realtime do
         yield opcode_at(@pc)
+        refresh
       end
 
       sleep(cycle_time - realtime)
-
-      refresh
-      # raise "meh" if @pc == 0x30e
-      # if @pc == 0x30e
-      #   @video_memory.each do |vl|
-      #     puts vl.to_s(2)
-      #   end
-      #   sleep
-      # end
     end
   end
 
@@ -424,15 +401,17 @@ class Vm::Interpreter
   def draw_sprite(sprite_bytes : Array(UInt8), x, y)
     collision = false
 
+    # log "\n#{sprite_bytes.map { |e| e.to_s(2) }.join("\n")}\n"
+
     sprite_bytes.each_with_index do |sprite_pixel, sprite_line_index|
       line_num = y + sprite_line_index
-      display_line = @video_memory[line_num]
+      (0...8).each do |xi|
+        next if (sprite_pixel & (0x80 >> xi)) == 0
 
-      (0..8).each do |xi|
-        # next if (sprite_pixel & (0x80 >> xi)) == 0
+        offset = 63 - x - xi
+        display_bit_p = 1.to_u64 << offset
+        collision = true if (@video_memory[line_num] & display_bit_p) != 0
 
-        display_bit_p = (1.to_u64 << (63 - (x + xi)))
-        collision = true if (display_line & display_bit_p) == 1
         @video_memory[line_num] ^= display_bit_p
       end
     end
@@ -450,8 +429,10 @@ class Vm::Interpreter
     @renderer.draw_color = Colors::GRAY
     @renderer.clear
 
+    # @video_memory = Array(UInt64).new(@video_memory.size) { rand(0.to_u64...UInt64::MAX) }
+
     @video_memory.each_with_index do |line, line_i|
-      (0..64).each do |pix_i|
+      (0...64).each do |pix_i|
         offset = 63 - pix_i
         pix_value = (line & (1.to_u64 << offset)) >> offset
         @renderer.draw_color = pix_value == 1 ? Colors::BLACK : Colors::WHITE 
@@ -472,6 +453,7 @@ end
 # file = File.open("src/test_opcode.ch8")
 # file = File.open("src/TETRIS")
 file = File.open("src/GUESS")
+# file = File.open("src/BRIX")
 
 int = Vm::Interpreter.new(file)
 
