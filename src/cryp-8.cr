@@ -71,7 +71,7 @@ class Vm::Registers(T)
   end
 
   def to_s
-    @values.map { |e| e.to_s }.join(", ")
+    @values.map_with_index { |e, i| "v#{i}[#{e}]" }.join(", ")
   end
 end
 
@@ -219,7 +219,7 @@ class Vm::Interpreter
           x = (opcode & 0x0F00) >> 8
           y = (opcode & 0x00F0) >> 4
           log "Skips the next instruction if V#{x} equals V#{y}."
-          s = @registers[x] == @registers[x] ? 4 : 2
+          s = @registers[x] == @registers[y] ? 4 : 2
           @pc += s
         end
       when 0x6000
@@ -234,7 +234,7 @@ class Vm::Interpreter
         log "Adds #{nn} to V#{x}. (Carry flag is not changed)"
         @registers[x] =
           if (@registers[x] > 0) && (nn > UInt8::MAX - @registers[x])
-            @registers[x] - (UInt8::MAX - nn)
+            (UInt8::MAX - nn) + @registers[x] - 1
           else
             @registers[x] + nn
           end
@@ -258,7 +258,7 @@ class Vm::Interpreter
         when 0x0004
           log "Adds V#{y} to V#{x}. VF is set to 1 when there's a carry, and to 0 when there isn't."
           if (@registers[x] > 0) && (@registers[y] > UInt8::MAX - @registers[x])
-            @registers[x] = @registers[x] - (UInt8::MAX - @registers[y])
+            @registers[x] = @registers[x] - (UInt8::MAX - @registers[y]) - 1
             @registers[0xF] = 1
           else
             @registers[x] = @registers[x] + @registers[y]
@@ -267,7 +267,7 @@ class Vm::Interpreter
         when 0x0005
           log "V#{y} is subtracted from V#{x}. VF is set to 0 when there's a borrow, and 1 when there isn't."
           if @registers[x] < @registers[y]
-            @registers[x] = @registers[y] - @registers[x]
+            @registers[x] = (255 - (@registers[y] - @registers[x]) + 1).to_u8
             @registers[0xF] = 1
           else
             @registers[x] = @registers[x] - @registers[y]
@@ -320,7 +320,7 @@ class Vm::Interpreter
         n = opcode & 0x000F
         log "Draws a sprite at coordinate (V#{x}, V#{y}) that has a width of 8 pixels and a height of #{n} pixels. "
         sprite_bytes = @memory[@i...(@i+n)]
-        collision = draw_sprite(sprite_bytes, x, y)
+        collision = draw_sprite(sprite_bytes, @registers[x], @registers[y])
         @registers[0xF] = (collision == true ? 1.to_u8 : 0.to_u8)
         @pc += 2
       when 0xE000
@@ -375,11 +375,11 @@ class Vm::Interpreter
 
   def log(str)
     # @video.puts "[#{@pc.to_s(16)}] [Reg: #{@registers.to_s}] #{str.to_s}"
-    puts "[#{@pc.to_s(16)}] [Reg: #{@registers.to_s}] #{str.to_s}"
+    puts "[#{@pc.to_s(16)}] [I: #{@i}] [Reg: #{@registers.to_s}] #{str.to_s}"
   end
 
   def cycle : Nil
-    cycle_per_sec = 10
+    cycle_per_sec = 60
     cycle_nanoseconds = (1_000_000_000/cycle_per_sec).to_i32
     cycle_time = Time::Span.new(nanoseconds: cycle_nanoseconds)
 
@@ -390,6 +390,8 @@ class Vm::Interpreter
       end
 
       sleep(cycle_time - realtime)
+
+      sleep if @pc == 0x3dc
     end
   end
 
@@ -436,7 +438,7 @@ class Vm::Interpreter
         offset = 63 - pix_i
         pix_value = (line & (1.to_u64 << offset)) >> offset
         @renderer.draw_color = pix_value == 1 ? Colors::BLACK : Colors::WHITE 
-        @renderer.fill_rect(pix_i * @pixel_w, line_i * @pixel_h, @pixel_w.to_i32 - 1, @pixel_h.to_i32 - 1)
+        @renderer.fill_rect(pix_i * @pixel_w, line_i * @pixel_h, @pixel_w.to_i32, @pixel_h.to_i32)
       end
     end
 
@@ -450,9 +452,9 @@ Signal::INT.trap do
 end
 
 # file = File.open("BC_test.ch8")
-# file = File.open("src/test_opcode.ch8")
+file = File.open("src/test_opcode.ch8")
 # file = File.open("src/TETRIS")
-file = File.open("src/GUESS")
+# file = File.open("src/GUESS")
 # file = File.open("src/BRIX")
 
 int = Vm::Interpreter.new(file)
