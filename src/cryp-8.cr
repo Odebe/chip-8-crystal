@@ -113,6 +113,9 @@ class Vm::Interpreter
   @pc : UInt16
   @pixel_h : UInt8
   @pixel_w : UInt8
+  @delay_timer : UInt8
+  @keyboard : Array(UInt8)
+  @draw_flag : Bool
 
   FONTSET = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, # 0
@@ -133,23 +136,45 @@ class Vm::Interpreter
     0xF0, 0x80, 0xF0, 0x80, 0x80  # F
   ]
 
+  KEYMAP = {
+    LibSDL::Keycode::KEY_1 => 0x1,
+    LibSDL::Keycode::KEY_2 => 0x2,
+    LibSDL::Keycode::KEY_3 => 0x3,
+    LibSDL::Keycode::KEY_4 => 0xC,
+
+    LibSDL::Keycode::Q => 0x4,
+    LibSDL::Keycode::W => 0x5,
+    LibSDL::Keycode::E => 0x6,
+    LibSDL::Keycode::R => 0xD,
+
+    LibSDL::Keycode::A => 0x7,
+    LibSDL::Keycode::S => 0x8,
+    LibSDL::Keycode::D => 0x9,
+    LibSDL::Keycode::F => 0xE,
+
+    LibSDL::Keycode::Z => 0xA,
+    LibSDL::Keycode::X => 0x0,
+    LibSDL::Keycode::C => 0xB,
+    LibSDL::Keycode::V => 0xF
+  }
+
   def initialize(@file : File)
     @stack = Vm::Stack(UInt16).new
     @registers = Vm::Registers(UInt8).new
     @memory = Vm::Memory.new
+    @keyboard = Array(UInt8).new(16, 0) # Переписать на UInt16-число
 
     @window = SDL::Window.new("Cryps-8!", 640, 320)
     @renderer = SDL::Renderer.new(@window)
     @video_memory = Array(UInt64).new(32, 0) # handles 64hx32w
  
-    # @pixel_h = 10.to_u8 # (width / 32).to_i32
-    # @pixel_w = 10.to_u8 # (hidth / 64).to_i32
-
     @pixel_h = (@window.height / 32).to_u8
     @pixel_w = (@window.width / 64).to_u8
 
-    @i = 0.to_u16
-    @start_p = 0x200.to_u16
+    @draw_flag = true
+    @delay_timer = 0_u8
+    @i = 0_u16
+    @start_p = 0x200_u16
     @font_start_p = (@start_p - FONTSET.size).to_u16
     @pc = @start_p.to_u16
 
@@ -252,8 +277,8 @@ class Vm::Interpreter
           @registers[x] = @registers[x] ^ @registers[y]
         when 0x0004
           log "Adds V#{y} to V#{x}. VF is set to 1 when there's a carry, and to 0 when there isn't."
-          borrow = (@registers[y] > UInt8::MAX - @registers[x]) ? 1: 0
-          @registers[0xF] = borrow.to_u8
+          borrow = (@registers[y] > UInt8::MAX - @registers[x]) ? 1_u8 : 0_u8
+          @registers[0xF] = borrow
           @registers[x] = @registers[x] &+ @registers[y]
         when 0x0005
           log "V#{y} is subtracted from V#{x}. VF is set to 0 when there's a borrow, and 1 when there isn't."
@@ -265,8 +290,8 @@ class Vm::Interpreter
           @registers[x] = @registers[x] >> 1
         when 0x0007
           log "Sets V#{x} to V#{y} minus V#{x}. VF is set to 0 when there's a borrow, and 1 when there isn't."
-          borrow = @registers[y] < @registers[x] ? 1 : 0
-          @registers[0xF] = borrow.to_u8
+          borrow = @registers[y] < @registers[x] ? 1_u8 : 0_u8
+          @registers[0xF] = borrow
           @registers[x] = @registers[y] &- @registers[x]
         when 0x000E
           log "Stores the most significant bit of V#{x} in VF and then shifts V#{x} to the left by 1."
@@ -304,28 +329,42 @@ class Vm::Interpreter
         y = (opcode & 0x00F0) >> 4
         n = opcode & 0x000F
         log "Draws a sprite at coordinate (V#{x}, V#{y}) that has a width of 8 pixels and a height of #{n} pixels. "
-        sprite_bytes = @memory[@i...(@i+n)]
-        collision = draw_sprite(sprite_bytes, @registers[x], @registers[y])
-        @registers[0xF] = (collision == true ? 1.to_u8 : 0.to_u8)
+        collision = draw_sprite(@memory[@i...(@i+n)], @registers[x], @registers[y])
+        @draw_flag = true
+        @registers[0xF] = (collision == true ? 1_u8 : 0_u8)
         @pc += 2
       when 0xE000
         x = (opcode & 0x0F00) >> 8
         case opcode & 0x00FF
         when 0x009E
           log "Skips the next instruction if the key stored in V#{x} is pressed."
+          key = @registers[x]
+          s = @keyboard[key] == 1 ? 4 : 2
+          @pc += s
         when 0x00A1
           log "Skips the next instruction if the key stored in V#{x} isn't pressed. "
+          key = @registers[x]
+          s = @keyboard[key] == 0 ? 4 : 2
+          @pc += s
         end
-        @pc += 2
       when 0xF000
         x = (opcode & 0x0F00) >> 8
         case opcode & 0x00FF
         when 0x0007
           log "Sets V#{x} to the value of the delay timer."
+          @registers[x] = @delay_timer
         when 0x000A
           log "A key press is awaited, and then stored in V#{x}. (Blocking Operation. All instruction halted until next key event)"
+          any_key_pressed = false
+          @keyboard.each_with_index do |pressed, key|
+            next unless pressed == 1
+
+            @registers[x] = key.to_u8
+          end
+          return unless any_key_pressed
         when 0x0015
           log "Sets the delay timer to V#{x}."
+          @delay_timer = @registers[x]
         when 0x0018
           log "Sets the sound timer to V#{x}."
         when 0x001E
@@ -337,9 +376,9 @@ class Vm::Interpreter
         when 0x0033
           # Store BCD representation of Vx in memory location starting at location I.
           log "Stores the binary-coded decimal representation of V#{x}"
-          @memory[@i]     = @registers[x] // 100;
-          @memory[@i + 1] = (@registers[x] // 10) % 10;
-          @memory[@i + 2] = @registers[x] % 10;
+          @memory[@i] = @registers[x] // 100
+          @memory[@i + 1] = (@registers[x] // 10) % 10
+          @memory[@i + 2] = @registers[x] % 10
         when 0x0055
           log "Stores V0 to V#{x} (including V#{x}) in memory starting at address I."
           @registers[0..x].each_with_index do |e, i|
@@ -359,12 +398,11 @@ class Vm::Interpreter
   end
 
   def log(str)
-    # @video.puts "[#{@pc.to_s(16)}] [Reg: #{@registers.to_s}] #{str.to_s}"
-    puts "[#{@pc.to_s(16)}] [I: #{@i}] [Reg: #{@registers.to_s}] #{str.to_s}"
+    # puts "[#{@pc.to_s(16)}] [I: #{@i}] [T: #{@delay_timer}][Reg: #{@registers.to_s}] #{str.to_s}"
   end
 
   def cycle : Nil
-    cycle_per_sec = 60
+    cycle_per_sec = 12000
     cycle_nanoseconds = (1_000_000_000/cycle_per_sec).to_i32
     cycle_time = Time::Span.new(nanoseconds: cycle_nanoseconds)
 
@@ -372,6 +410,20 @@ class Vm::Interpreter
       realtime = Benchmark.realtime do
         yield opcode_at(@pc)
         refresh
+        @delay_timer -= 1 if @delay_timer > 0
+
+        case event = SDL::Event.poll
+        when SDL::Event::Quit
+          exit
+        when SDL::Event::Keyboard
+          exit if event.sym.escape?
+
+          if KEYMAP[event.sym]?
+            value = event.keydown? ? 1_u8 : 0_u8
+            key = KEYMAP[event.sym]
+            @keyboard[key] = value
+          end
+        end
       end
 
       sleep(cycle_time - realtime)
@@ -388,16 +440,14 @@ class Vm::Interpreter
   def draw_sprite(sprite_bytes : Array(UInt8), x, y)
     collision = false
 
-    # log "\n#{sprite_bytes.map { |e| e.to_s(2) }.join("\n")}\n"
-
     sprite_bytes.each_with_index do |sprite_pixel, sprite_line_index|
       line_num = y + sprite_line_index
       (0...8).each do |xi|
         next if (sprite_pixel & (0x80 >> xi)) == 0
 
         offset = 63 - x - xi
-        display_bit_p = 1.to_u64 << offset
-        collision = true if (@video_memory[line_num] & display_bit_p) != 0
+        display_bit_p = 1_u64 << offset
+        collision = true if (@video_memory[line_num] & display_bit_p) > 0
 
         @video_memory[line_num] ^= display_bit_p
       end
@@ -413,6 +463,9 @@ class Vm::Interpreter
   end
 
   def refresh: Nil
+    return unless @draw_flag
+    
+    @draw_flag = false
     @renderer.draw_color = Colors::GRAY
     @renderer.clear
 
@@ -437,10 +490,10 @@ Signal::INT.trap do
 end
 
 # file = File.open("BC_test.ch8")
-file = File.open("src/test_opcode.ch8")
+# file = File.open("src/test_opcode.ch8")
 # file = File.open("src/TETRIS")
 # file = File.open("src/GUESS")
-# file = File.open("src/BRIX")
+file = File.open("src/BRIX")
 
 int = Vm::Interpreter.new(file)
 
