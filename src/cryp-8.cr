@@ -12,11 +12,11 @@ Signal::INT.trap do
   exit
 end
 
-# file = File.open("BC_test.ch8")
-# file = File.open("src/test_opcode.ch8")
-# file = File.open("src/TETRIS")
-# file = File.open("src/GUESS")
-file = File.open("src/BRIX")
+# file = File.open("roms/BC_test.ch8")
+# file = File.open("roms/test_opcode.ch8")
+# file = File.open("roms/TETRIS")
+# file = File.open("roms/GUESS")
+file = File.open("roms/BRIX")
 
 int = Vm::Interpreter.new(file)
 
