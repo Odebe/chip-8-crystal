@@ -5,7 +5,6 @@ class Vm::Interpreter
   @font_start_p : UInt16
   @pc : UInt16
   @delay_timer : UInt8
-  @keyboard : Array(UInt8)
 
   FONTSET = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, # 0
@@ -26,33 +25,11 @@ class Vm::Interpreter
     0xF0, 0x80, 0xF0, 0x80, 0x80  # F
   ]
 
-  KEYMAP = {
-    LibSDL::Keycode::KEY_1 => 0x1,
-    LibSDL::Keycode::KEY_2 => 0x2,
-    LibSDL::Keycode::KEY_3 => 0x3,
-    LibSDL::Keycode::KEY_4 => 0xC,
-
-    LibSDL::Keycode::Q => 0x4,
-    LibSDL::Keycode::W => 0x5,
-    LibSDL::Keycode::E => 0x6,
-    LibSDL::Keycode::R => 0xD,
-
-    LibSDL::Keycode::A => 0x7,
-    LibSDL::Keycode::S => 0x8,
-    LibSDL::Keycode::D => 0x9,
-    LibSDL::Keycode::F => 0xE,
-
-    LibSDL::Keycode::Z => 0xA,
-    LibSDL::Keycode::X => 0x0,
-    LibSDL::Keycode::C => 0xB,
-    LibSDL::Keycode::V => 0xF
-  }
-
   def initialize(@file : File)
     @stack = Vm::Stack(UInt16).new
     @registers = Vm::Registers(UInt8).new
     @memory = Vm::Memory.new
-    @keyboard = Array(UInt8).new(16, 0) # Переписать на UInt16-число
+    @keyboard = Vm::Keyboard.new
 
     @video = Vm::Video.new
     @delay_timer = 0_u8
@@ -221,12 +198,12 @@ class Vm::Interpreter
         when 0x009E
           log "Skips the next instruction if the key stored in V#{x} is pressed."
           key = @registers[x]
-          s = @keyboard[key] == 1 ? 4 : 2
+          s = @keyboard.pressed?(key) ? 4 : 2
           @pc += s
         when 0x00A1
           log "Skips the next instruction if the key stored in V#{x} isn't pressed. "
           key = @registers[x]
-          s = @keyboard[key] == 0 ? 4 : 2
+          s = @keyboard.pressed?(key) ? 2 : 4
           @pc += s
         end
       when 0xF000
@@ -237,14 +214,9 @@ class Vm::Interpreter
           @registers[x] = @delay_timer
         when 0x000A
           log "A key press is awaited, and then stored in V#{x}. (Blocking Operation. All instruction halted until next key event)"
-          any_key_pressed = false
-          @keyboard.each_with_index do |pressed, key|
-            next unless pressed == 1
+          return unless @keyboard.any_key_pressed?
 
-            any_key_pressed = true
-            @registers[x] = key.to_u8
-          end
-          return unless any_key_pressed
+          @registers[x] = @keyboard.pressed_key.not_nil!.to_u8
         when 0x0015
           log "Sets the delay timer to V#{x}."
           @delay_timer = @registers[x]
@@ -294,21 +266,8 @@ class Vm::Interpreter
         yield opcode_at(@pc)
         @video.refresh
         @delay_timer -= 1 if @delay_timer > 0
-
-        case event = SDL::Event.poll
-        when SDL::Event::Quit
-          exit
-        when SDL::Event::Keyboard
-          exit if event.sym.escape?
-
-          if KEYMAP[event.sym]?
-            value = event.keydown? ? 1_u8 : 0_u8
-            key = KEYMAP[event.sym]
-            @keyboard[key] = value
-          end
-        end
+        @keyboard.poll
       end
-
       sleep(cycle_time - realtime)
     end
   end
