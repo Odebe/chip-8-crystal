@@ -7,9 +7,6 @@ module Cryp8
   VERSION = "0.1.0"
 end
 
-SDL.init(SDL::Init::VIDEO)
-at_exit { SDL.quit }
-
 Signal::INT.trap do
   puts "CTRL-C handler here!"
   exit

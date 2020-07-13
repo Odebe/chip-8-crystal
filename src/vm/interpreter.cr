@@ -4,11 +4,8 @@ class Vm::Interpreter
   @start_p : UInt16
   @font_start_p : UInt16
   @pc : UInt16
-  @pixel_h : UInt8
-  @pixel_w : UInt8
   @delay_timer : UInt8
   @keyboard : Array(UInt8)
-  @draw_flag : Bool
 
   FONTSET = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, # 0
@@ -57,14 +54,7 @@ class Vm::Interpreter
     @memory = Vm::Memory.new
     @keyboard = Array(UInt8).new(16, 0) # Переписать на UInt16-число
 
-    @window = SDL::Window.new("Cryps-8!", 640, 320)
-    @renderer = SDL::Renderer.new(@window)
-    @video_memory = Array(UInt64).new(32, 0) # handles 64hx32w
-
-    @pixel_h = (@window.height / 32).to_u8
-    @pixel_w = (@window.width / 64).to_u8
-
-    @draw_flag = true
+    @video = Vm::Video.new
     @delay_timer = 0_u8
     @i = 0_u16
     @start_p = 0x200_u16
@@ -103,7 +93,7 @@ class Vm::Interpreter
         case opcode & 0x000F
         when 0x0000
           log "Clears the screen."
-          @video_memory = Array(UInt64).new(@video_memory.size, 0)
+          @video.clear!
           @pc += 2
         when 0x000E
           v = @stack.pop
@@ -222,8 +212,7 @@ class Vm::Interpreter
         y = (opcode & 0x00F0) >> 4
         n = opcode & 0x000F
         log "Draws a sprite at coordinate (V#{x}, V#{y}) that has a width of 8 pixels and a height of #{n} pixels. "
-        collision = draw_sprite(@memory[@i...(@i+n)], @registers[x], @registers[y])
-        @draw_flag = true
+        collision = @video.draw_sprite(@memory[@i...(@i+n)], @registers[x], @registers[y])
         @registers[0xF] = (collision == true ? 1_u8 : 0_u8)
         @pc += 2
       when 0xE000
@@ -303,7 +292,7 @@ class Vm::Interpreter
     while running?
       realtime = Benchmark.realtime do
         yield opcode_at(@pc)
-        refresh
+        @video.refresh
         @delay_timer -= 1 if @delay_timer > 0
 
         case event = SDL::Event.poll
@@ -321,59 +310,11 @@ class Vm::Interpreter
       end
 
       sleep(cycle_time - realtime)
-
-      sleep if @pc == 0x3dc
     end
   end
 
   def opcode_at(i)
     code_value = (@memory[i].to_u16 << 8) | @memory[i + 1]
     Vm::OpCode.new(code_value)
-  end
-
-  def draw_sprite(sprite_bytes : Array(UInt8), x, y)
-    collision = false
-
-    sprite_bytes.each_with_index do |sprite_pixel, sprite_line_index|
-      line_num = y + sprite_line_index
-      (0...8).each do |xi|
-        next if (sprite_pixel & (0x80 >> xi)) == 0
-
-        offset = 63 - x - xi
-        display_bit_p = 1_u64 << offset
-        collision = true if (@video_memory[line_num] & display_bit_p) > 0
-
-        @video_memory[line_num] ^= display_bit_p
-      end
-    end
-
-    collision
-  end
-
-  module Colors
-    GRAY = SDL::Color[175, 175, 175, 255]
-    WHITE = SDL::Color[255, 255, 255, 255]
-    BLACK = SDL::Color[0, 0, 0, 255]
-  end
-
-  def refresh: Nil
-    return unless @draw_flag
-
-    @draw_flag = false
-    @renderer.draw_color = Colors::GRAY
-    @renderer.clear
-
-    # @video_memory = Array(UInt64).new(@video_memory.size) { rand(0.to_u64...UInt64::MAX) }
-
-    @video_memory.each_with_index do |line, line_i|
-      (0...64).each do |pix_i|
-        offset = 63 - pix_i
-        pix_value = (line & (1.to_u64 << offset)) >> offset
-        @renderer.draw_color = pix_value == 1 ? Colors::BLACK : Colors::WHITE
-        @renderer.fill_rect(pix_i * @pixel_w, line_i * @pixel_h, @pixel_w.to_i32, @pixel_h.to_i32)
-      end
-    end
-
-    @renderer.present
   end
 end
