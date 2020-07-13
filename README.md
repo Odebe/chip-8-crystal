@@ -1,27 +1,23 @@
 # cryp-8
 
-TODO: Write a description here
+chip-8 emulator
 
 ## Installation
-
-TODO: Write installation instructions here
+First of all [Install Crystal](https://crystal-lang.org/install/) and then build with command
+```shell script
+shards install && shards build
+```
 
 ## Usage
+Run and enjoy (or not).
 
-TODO: Write usage instructions here
+```shell script
+./bin/cryp-8
+```
 
-## Development
+## Development & Contributing
 
-TODO: Write development instructions here
-
-## Contributing
-
-1. Fork it (<https://github.com/your-github-user/cryp-8/fork>)
-2. Create your feature branch (`git checkout -b my-new-feature`)
-3. Commit your changes (`git commit -am 'Add some feature'`)
-4. Push to the branch (`git push origin my-new-feature`)
-5. Create a new Pull Request
+**Do not touch my garbage!**
 
 ## Contributors
-
-- [Дмитриев Михаил Евгеньевич](https://github.com/your-github-user) - creator and maintainer
+- [Дмитриев Odebe Михаил](https://github.com/Odebe) - creator and maintainer
