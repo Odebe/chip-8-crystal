@@ -1,6 +1,4 @@
-require "benchmark"
 require "sdl"
-
 require "./vm.cr"
 
 module Cryp8
