@@ -144,10 +144,10 @@ class Vm::Interpreter
       when 0x0003
         @registers[x] = @registers[x] ^ @registers[y]
       when 0x0004
-        @registers[0xF] = (@registers[y] > UInt8::MAX - @registers[x]) ? 1_u8 : 0_u8
+        @registers[0xF] = @registers[y] > UInt8::MAX - @registers[x] ? 1_u8 : 0_u8
         @registers[x] = @registers[x] &+ @registers[y]
       when 0x0005
-        borrow = @registers[x] < @registers[y] ? 1 : 0
+        @registers[0xF] = @registers[x] < @registers[y] ? 1_u8 : 0_u8
         @registers[x] = @registers[x] &- @registers[y]
       when 0x0006
         @registers[0xF] = @registers[x] & 0x1
