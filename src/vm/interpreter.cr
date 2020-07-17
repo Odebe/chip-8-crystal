@@ -72,7 +72,7 @@ class Vm::Interpreter
   end
 
   def log(str)
-    # puts "[#{@pc.to_s(16)}] [I: #{@i}] [T: #{@delay_timer}][Reg: #{@registers.to_s}] #{str.to_s}"
+    # puts "[#{(@pc - @start_p).to_s(16)}] [#{@pc.to_s(16)}]  #{str.to_s} \n[I: #{@i}] [T: #{@delay_timer}][Reg: #{@registers.to_s}]"
   end
 
   def repeat(hz : Int, &block)
@@ -113,101 +113,132 @@ class Vm::Interpreter
         @pc = @stack.pop
       end
       next_code!
-    when 0x1000 
+    when 0x1000
+      log "JP #{nnn.to_s(16)}"
       @pc = nnn
     when 0x2000
+      log "CALL #{nnn.to_s(16)}"
       @stack.push @pc
       @pc = nnn
-    when 0x3000 
+    when 0x3000
+      log "SE V#{x}, #{kk}"
       @registers[x] == kk ? skip_next_code! : next_code!
     when 0x4000 
+      log "SNE V#{x}, #{kk}"
       @registers[x] != kk ? skip_next_code! : next_code!
     when 0x5000
       case opcode & 0x000F
-      when 0x0000 
+      when 0x0000
+        log "SE V#{x}, V#{y}"
         @registers[x] == @registers[y] ? skip_next_code! : next_code!
       end
     when 0x6000
+      log "LD V#{x}, #{kk}"
       @registers[x] = kk.to_u8
       next_code!
     when 0x7000
+      log "ADD V#{x}, #{kk}"
       @registers[x] = @registers[x] &+ kk
       next_code!
     when 0x8000
       case opcode & 0x000F
       when 0x0000
+        log "LD V#{x}, V#{y}"
         @registers[x] = @registers[y]
       when 0x0001
+        log "OR V#{x}, V#{y}"
         @registers[x] = @registers[x] | @registers[y]
       when 0x0002
+        log "AND V#{x}, V#{y}"
         @registers[x] = @registers[x] & @registers[y]
       when 0x0003
+        log "XOR V#{x}, V#{y}"
         @registers[x] = @registers[x] ^ @registers[y]
       when 0x0004
+        log "ADD V#{x}, V#{y}"
         @registers[0xF] = @registers[y] > UInt8::MAX - @registers[x] ? 1_u8 : 0_u8
         @registers[x] = @registers[x] &+ @registers[y]
       when 0x0005
-        @registers[0xF] = @registers[x] < @registers[y] ? 1_u8 : 0_u8
+        log "SUB V#{x}, V#{y}"
+        @registers[0xF] = @registers[x] > @registers[y] ? 1_u8 : 0_u8
         @registers[x] = @registers[x] &- @registers[y]
       when 0x0006
+        log "SHR V#{x} {, V#{y}}"
         @registers[0xF] = @registers[x] & 0x1
         @registers[x] = @registers[x] >> 1
       when 0x0007
-        @registers[0xF] = @registers[y] < @registers[x] ? 1_u8 : 0_u8
+        log "SUBN V#{x}, V#{y}"
+        @registers[0xF] = @registers[y] > @registers[x] ? 1_u8 : 0_u8
         @registers[x] = @registers[y] &- @registers[x]
       when 0x000E
+        log "SHL V#{x} {, V#{y}}"
         @registers[0xF] = @registers[x] & 0x80
         @registers[x] = @registers[x] << 1
       end
       next_code!
     when 0x9000
       case opcode & 0x000F
-      when 0x0000 
+      when 0x0000
+        log "SNE V#{x}, V#{y}"
         @registers[x] != @registers[y] ? skip_next_code! : next_code!
       end
     when 0xA000
+      log "LD I, #{nnn}"
       @i = nnn
       next_code!
     when 0xB000
+      log "JP V0, #{nnn}"
       @stack.push @pc
       @pc = nnn + @registers[0]
     when 0xC000
+      log "RND V#{x}, #{kk}"
       @registers[x] = rand(0...256).to_u8 & kk
       next_code!
     when 0xD000
-      collision = @video.draw_sprite(@memory[@i...(@i+n)], @registers[x], @registers[y])
-      @registers[0xF] = (collision == true ? 1_u8 : 0_u8)
+      log "DRW V#{x}, V#{y}, #{n}"
+      @registers[0xF] = @video.draw_sprite(@memory[@i...(@i+n)], @registers[x], @registers[y])
       next_code!
     when 0xE000
       case opcode & 0x00FF
-      when 0x009E 
+      when 0x009E
+        log "SKP V#{x}"
         @keyboard.pressed?(@registers[x]) ? skip_next_code! : next_code!
-      when 0x00A1 
+      when 0x00A1
+        log "SKNP V#{x}"
         @keyboard.pressed?(@registers[x]) ? next_code! : skip_next_code!
       end
     when 0xF000
       case opcode & 0x00FF
-      when 0x0007 
+      when 0x0007
+        log "LD V#{x}, DT"
         @registers[x] = @delay_timer
       when 0x000A
+        log "LD V#{x}, K"
         return unless @keyboard.any_key_pressed?
 
         @registers[x] = @keyboard.pressed_key.not_nil!.to_u8
       when 0x0015 
+        log "LD DT, V#{x}"
         @delay_timer = @registers[x]
       when 0x0018
+        log "LD ST, V#{x}"
         @audio_timer = @registers[x]
-      when 0x001E 
+      when 0x001E
+        log "ADD I, V#{x}"
         @i += @registers[x]
-      when 0x0029 
+      when 0x0029
+        log "LD F, V#{x}"
         @i = char_font_p(@memory[x])
       when 0x0033
+        log "LD B, V#{x}"
         @memory[@i] = @registers[x] // 100
         @memory[@i + 1] = (@registers[x] // 10) % 10
         @memory[@i + 2] = @registers[x] % 10
       when 0x0055
+        log "LD [I], V#{x}"
         @registers[0..x].each_with_index { |e, i| @memory[@i + i] = e }
       when 0x0065
+        log "LD V#{x}, [I]"
         (0..x).each { |xi| @registers[xi] = @memory[@i + xi] }
       end
       next_code!

@@ -30,7 +30,7 @@ class Vm::Video
 
   def draw_sprite(sprite_bytes : Array(UInt8), x, y)
     @draw_flag = true
-    collision = false
+    collision = 0_u8
 
     sprite_bytes.each_with_index do |sprite_pixel, sprite_line_index|
       line_num = y + sprite_line_index
@@ -39,7 +39,7 @@ class Vm::Video
 
         offset = 63 - x - xi
         display_bit_p = 1_u64 << offset
-        collision = true if (@video_memory[line_num] & display_bit_p) > 0
+        collision = 1_u8 if (@video_memory[line_num] & display_bit_p) > 0
 
         @video_memory[line_num] ^= display_bit_p
       end
