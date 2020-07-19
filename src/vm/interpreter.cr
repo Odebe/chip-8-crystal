@@ -6,6 +6,7 @@ class Vm::Interpreter
   @pc : UInt16
   @delay_timer : UInt8
   @audio_timer : UInt8
+  @debug : Bool
 
   FONTSET = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, # 0
@@ -26,7 +27,7 @@ class Vm::Interpreter
     0xF0, 0x80, 0xF0, 0x80, 0x80  # F
   ]
 
-  def initialize(@file : File)
+  def initialize(@file : File, @debug : Bool = false)
     @stack = Vm::Stack(UInt16).new
     @registers = Vm::Registers(UInt8).new
     @memory = Vm::Memory.new
@@ -72,7 +73,7 @@ class Vm::Interpreter
   end
 
   def log(str)
-    # puts "[#{(@pc - @start_p).to_s(16)}] [#{@pc.to_s(16)}]  #{str.to_s} \n[I: #{@i}] [T: #{@delay_timer}][Reg: #{@registers.to_s}]"
+    puts "[#{(@pc - @start_p).to_s(16)}] [#{@pc.to_s(16)}]  #{str.to_s} \n[I: #{@i}] [T: #{@delay_timer}][Reg: #{@registers.to_s}]" if @debug
   end
 
   def repeat(hz : Int, &block)
@@ -107,9 +108,9 @@ class Vm::Interpreter
     case opcode & 0xF000
     when 0x0000
       case opcode & 0x000F
-      when 0x0000 
+      when 0x0000
         @video.clear!
-      when 0x000E 
+      when 0x000E
         @pc = @stack.pop
       end
       next_code!
@@ -123,7 +124,7 @@ class Vm::Interpreter
     when 0x3000
       log "SE V#{x}, #{kk}"
       @registers[x] == kk ? skip_next_code! : next_code!
-    when 0x4000 
+    when 0x4000
       log "SNE V#{x}, #{kk}"
       @registers[x] != kk ? skip_next_code! : next_code!
     when 0x5000
@@ -217,7 +218,7 @@ class Vm::Interpreter
         return unless @keyboard.any_key_pressed?
 
         @registers[x] = @keyboard.pressed_key.not_nil!.to_u8
-      when 0x0015 
+      when 0x0015
         log "LD DT, V#{x}"
         @delay_timer = @registers[x]
       when 0x0018
@@ -252,7 +253,7 @@ class Vm::Interpreter
     @audio_timer -= 1 if @audio_timer > 0
   end
 
-  def cpu_cycle : Nil    
+  def cpu_cycle : Nil
     opcode = read_opcode
     process_(opcode)
 
