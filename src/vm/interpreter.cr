@@ -29,11 +29,12 @@ class Vm::Interpreter
 
   def initialize(@file : File, @debug : Bool = false)
     @stack = Vm::Stack(UInt16).new
-    @registers = Vm::Registers(UInt8).new
-    @memory = Vm::Memory.new
+    @registers = Array(UInt8).new(16, 0) 
+    @memory = Array(UInt8).new(4096, 0)
+    
     @keyboard = Vm::Keyboard.new
-
     @video = Vm::Video.new
+    
     @audio_timer = 0_u8
     @delay_timer = 0_u8
     @i = 0_u16
@@ -262,7 +263,7 @@ class Vm::Interpreter
   end
 
   def read_opcode
-    Vm::OpCode.new((@memory[@pc].to_u16 << 8) | @memory[@pc + 1])
+    (@memory[@pc].to_u16 << 8) | @memory[@pc + 1]
   end
 
   def next_code!
